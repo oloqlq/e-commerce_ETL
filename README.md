@@ -13,7 +13,7 @@
 - faker 라이브러리를 활용한 가짜 로그 생성 ( 로컬 실행 )
 - 예상 raw데이터 크기 : n x 1000 row
 ```
-- product_master_tbl    : 상품 마스터 테이블. 이벤트&판매 로그 데이터 생성 시 참조
+- product_master.csv    : 상품 마스터 테이블. 이벤트&판매 로그 데이터 생성 시 참조
 - event_log_gen.py      : 유저 행동 (이벤트) 로그데이터 생성
 - sales_log_gen.py      : 판매 로그데이터 생성
 ```
@@ -30,13 +30,11 @@
 ```
 ## Load
 - s3에 단계별 적재
-- silver
 ```
 - s3/bucket/silver/event & sales
     - silver_event_tbl.parquet,
     - silver_sales_tbl.parquet
 ```
-- gold
 ```
 - s3/bucket/gold/event & sales
     - gold_event_tbl.parquet
