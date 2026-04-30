@@ -65,7 +65,7 @@ def get_sleep_time():
     return max(0.5, 5.5 - (weight * 0.5))
 
 ACTIONS = ["view", "click", "add_to_cart", "wishlist", "search", "purchase"]
-ACTION_WEIGHTS = [0.45, 0.23, 0.12, 0.08, 0.05, 0.07]
+ACTION_WEIGHTS = [0.30, 0.20, 0.12, 0.08, 0.05, 0.25]
 
 PAGE_TYPES = {
     "view": ["category", "product_detail"],
