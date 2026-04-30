@@ -139,7 +139,7 @@ def generate_event(user_id, session_id, action=None):
     events = {
         "event_id":        str(uuid.uuid4()),
         "event_timestamp": datetime.now().isoformat(),
-        "user_id":         user_id if random.random() > 0.2 else None,
+        "user_id":         user_id,
         "session_id":      session_id if user_id else f"SESS-{random.randint(1,999):03d}",
         "item_id":         item_id,
         "action":          action,
@@ -175,7 +175,7 @@ def generate_session_events(user_id, session_id):
 def send_to_kinesis(client, event):
     client.put_record(
         StreamName=STREAM_NAME,
-        Data=json.dumps(event, ensure_ascii=False),
+        Data=json.dumps(event, ensure_ascii=False) + "\n",
         PartitionKey=event["action"]
     )
 
@@ -190,8 +190,9 @@ def main():
     print("이벤트 로그 스트리밍 시작...")
     while True:
         # 유저 선택 -> 그 유저 세션 선택
-        user_id = random.choice(USER_POOL)
-        session_id = random.choice(user_sessions[user_id])
+        is_member = random.random()> 0.2
+        user_id = random.choice(USER_POOL) if is_member else None
+        session_id = random.choice(user_sessions[random.choice(USER_POOL)]) if not is_member else random.choice(user_sessions[user_id])
 
         events = generate_session_events(user_id, session_id)
         for event in events:
