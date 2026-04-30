@@ -8,7 +8,6 @@
 """
 
 import json
-import time
 import random
 import boto3
 import uuid
@@ -57,12 +56,6 @@ def validate_env():
     if missing:
         raise ValueError(f"Missing required environment variables: {missing}")
 
-def get_sleep_time():
-    """현재 시간대에 따라 전송 간격 조절"""
-    hour = datetime.now().hour
-    weight = HOUR_WEIGHTS[hour]
-    return max(0.5, 5.5 - (weight * 0.5))
-
 ACTIONS = ["view", "click", "add_to_cart", "wishlist", "search", "purchase"]
 ACTION_WEIGHTS = [0.45, 0.23, 0.12, 0.08, 0.05, 0.07]
 
@@ -110,7 +103,6 @@ PLATFORMS = ["app", "web"]
 PAYMENT_METHODS = ["card", "kakao_pay", "naver_pay", "bank_transfer"]
 PAYMENT_METHOD_WEIGHTS = [0.55, 0.20, 0.20, 0.05]
 
-# 할인 금액은 0원이 가장 많고, 소액 할인 위주로 구성
 DISCOUNT_AMOUNTS = [0, 1000, 2000, 3000, 5000, 10000]
 DISCOUNT_WEIGHTS = [0.45, 0.15, 0.15, 0.10, 0.10, 0.05]
 
@@ -144,6 +136,39 @@ def get_weighted_payment_method():
 def get_weighted_discount_amount():
     return random.choices(DISCOUNT_AMOUNTS, weights=DISCOUNT_WEIGHTS, k=1)[0]
 
+def get_weighted_session_start_time():
+    """
+    시간대 가중치를 반영해 세션 시작 시각 생성.
+    오늘 날짜 기준으로 시/분/초를 랜덤 생성하되,
+    미래 시간이 선택되면 하루 전으로 보정.
+    """
+    now = datetime.now()
+    today = now.date()
+
+    hour = random.choices(
+        population=list(range(24)),
+        weights=HOUR_WEIGHTS,
+        k=1
+    )[0]
+
+    minute = random.randint(0, 59)
+    second = random.randint(0, 59)
+
+    session_start = datetime(
+        year=today.year,
+        month=today.month,
+        day=today.day,
+        hour=hour,
+        minute=minute,
+        second=second
+    )
+
+    # 아직 오지 않은 미래 시간이면 어제로 보정
+    if session_start > now:
+        session_start -= timedelta(days=1)
+
+    return session_start
+
 def generate_session_context():
     """
     세션 단위 공통 속성 고정
@@ -175,7 +200,7 @@ def generate_session_context():
     return {
         "user_id": user_id,
         "session_id": session_id,
-        "session_start_time": datetime.now(),
+        "session_start_time": get_weighted_session_start_time(),
         "device": device,
         "platform": platform,
         "referrer": referrer,
@@ -307,7 +332,6 @@ def main():
         for event in events:
             send_to_kinesis(kinesis, event)
             print(event)
-            time.sleep(get_sleep_time())
 
 if __name__ == "__main__":
     main()
