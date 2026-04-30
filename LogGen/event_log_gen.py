@@ -4,6 +4,7 @@
 - 지역별 가중치
 - 디바이스별 카테고리 선호도 가중치
 - session context 고정
+- purchase 이벤트에만 판매 관련 필드 생성
 """
 
 import json
@@ -60,12 +61,10 @@ def get_sleep_time():
     """현재 시간대에 따라 전송 간격 조절"""
     hour = datetime.now().hour
     weight = HOUR_WEIGHTS[hour]
-    # weight 높을수록 간격 짧게
-    # weight 1 -> 약 5초, weight 10 -> 약 0.5초
     return max(0.5, 5.5 - (weight * 0.5))
 
 ACTIONS = ["view", "click", "add_to_cart", "wishlist", "search", "purchase"]
-ACTION_WEIGHTS = [0.30, 0.20, 0.12, 0.08, 0.05, 0.25]
+ACTION_WEIGHTS = [0.45, 0.23, 0.12, 0.08, 0.05, 0.07]
 
 PAGE_TYPES = {
     "view": ["category", "product_detail"],
@@ -107,6 +106,14 @@ CAMPAIGNS = {
 DEVICES = ["mobile", "desktop", "tablet"]
 PLATFORMS = ["app", "web"]
 
+# purchase 전용 필드
+PAYMENT_METHODS = ["card", "kakao_pay", "naver_pay", "bank_transfer"]
+PAYMENT_METHOD_WEIGHTS = [0.55, 0.20, 0.20, 0.05]
+
+# 할인 금액은 0원이 가장 많고, 소액 할인 위주로 구성
+DISCOUNT_AMOUNTS = [0, 1000, 2000, 3000, 5000, 10000]
+DISCOUNT_WEIGHTS = [0.45, 0.15, 0.15, 0.10, 0.10, 0.05]
+
 # 카테고리별 item_id 매핑 (product_master 기준)
 CATEGORY_ITEMS = {
     "전자기기": [f"ITEM-{i:03d}" for i in range(101, 116)],
@@ -131,17 +138,23 @@ def get_weighted_item(device):
     item_id = random.choice(CATEGORY_ITEMS[category])
     return item_id
 
+def get_weighted_payment_method():
+    return random.choices(PAYMENT_METHODS, weights=PAYMENT_METHOD_WEIGHTS, k=1)[0]
+
+def get_weighted_discount_amount():
+    return random.choices(DISCOUNT_AMOUNTS, weights=DISCOUNT_WEIGHTS, k=1)[0]
+
 def generate_session_context():
     """
     세션 단위 공통 속성 고정
     - user_id
     - session_id
     - session_start_time
-    - region
     - device
     - platform
     - referrer
     - campaign_id
+    - region_context (실제 내부 컨텍스트용)
     """
     is_member = random.random() > 0.2
     user_id = random.choice(USER_POOL) if is_member else None
@@ -153,9 +166,11 @@ def generate_session_context():
 
     device = random.choice(DEVICES)
     platform = random.choice(PLATFORMS)
-    region = get_weighted_region()
     referrer = random.choice(REFERRERS)
     campaign_id = f"CAMP-{random.randint(1, 3):03d}" if referrer == "ad" else None
+
+    # 내부 컨텍스트로는 보관하되, 실제 로그에는 purchase일 때만 노출
+    region_context = get_weighted_region()
 
     return {
         "user_id": user_id,
@@ -163,9 +178,9 @@ def generate_session_context():
         "session_start_time": datetime.now(),
         "device": device,
         "platform": platform,
-        "region": region,
         "referrer": referrer,
         "campaign_id": campaign_id,
+        "region_context": region_context,
     }
 
 def choose_session_flow():
@@ -197,6 +212,7 @@ def build_event_timestamp(session_start_time, step_idx):
 def generate_event_from_context(ctx, action, step_idx, fixed_item_id=None, fixed_search_keyword=None):
     """
     세션 컨텍스트를 공유하면서 이벤트 생성
+    purchase일 때만 판매 관련 필드를 채움
     """
     if action == "search":
         item_id = None
@@ -204,6 +220,16 @@ def generate_event_from_context(ctx, action, step_idx, fixed_item_id=None, fixed
     else:
         item_id = fixed_item_id or get_weighted_item(ctx["device"])
         search_keyword = None
+
+    # purchase 전용 필드
+    if action == "purchase":
+        discount_amount = get_weighted_discount_amount()
+        payment_method = get_weighted_payment_method()
+        region = ctx["region_context"]
+    else:
+        discount_amount = None
+        payment_method = None
+        region = None
 
     event = {
         "event_id": str(uuid.uuid4()),
@@ -214,20 +240,23 @@ def generate_event_from_context(ctx, action, step_idx, fixed_item_id=None, fixed
         "action": action,
         "device": ctx["device"],
         "platform": ctx["platform"],
-        "region": ctx["region"],
+        "region": region,
         "referrer": ctx["referrer"],
         "campaign_id": ctx["campaign_id"],
         "search_keyword": search_keyword,
         "page_type": random.choice(PAGE_TYPES[action]),
+        "discount_amount": discount_amount,
+        "payment_method": payment_method,
     }
     return event
 
 def generate_session_events():
     """
     세션 단위 이벤트 생성
-    - 하나의 세션에서는 region/device/platform/referrer/campaign 고정
+    - 하나의 세션에서는 user/session/device/platform/referrer/campaign 고정
     - 상품 관련 플로우는 item_id 고정
     - search가 있으면 search_keyword 고정
+    - region / discount_amount / payment_method 는 purchase일 때만 기록
     """
     ctx = generate_session_context()
     flow = choose_session_flow()
@@ -239,7 +268,6 @@ def generate_session_events():
     if "search" in flow:
         fixed_search_keyword = random.choice(SEARCH_KEYWORDS)
 
-    # 상품 상세 플로우에서는 동일 상품 유지
     if any(action in flow for action in ["view", "click", "add_to_cart", "wishlist", "purchase"]):
         fixed_item_id = get_weighted_item(ctx["device"])
 
