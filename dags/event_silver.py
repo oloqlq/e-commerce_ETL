@@ -1,10 +1,9 @@
 from airflow import DAG
-from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 from airflow.operators.python import PythonOperator
+from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 from datetime import datetime, timedelta
-import boto3
 import pandas as pd
-import io
 
 '''
     Airflow에서 AWS 연결 설정
@@ -16,13 +15,31 @@ import io
     Extra     : {"region_name": "ap-northeast-1"}
 '''
 
-
 # Athena ecommerce_bronze_db -> bronze_event
 DATABASE_BRONZE = 'ecommerce_bronze_db'
 DATABASE_SILVER = 'ecommerce_silver_db'
+BUCKET = 'de-ai-14-827913617635-ap-northeast-1-an'
 SILVER_S3_PATH = 's3://de-ai-14-827913617635-ap-northeast-1-an/silver/event/'
 ATHENA_RESULTS = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 SILVER_TBL_NAME = 'silver_event'
+
+def cleanup_silver_partition(target_dt, **kwargs):
+    hook = S3Hook(aws_conn_id="aws_default")
+    s3 = hook.get_conn()
+    
+    prefix = f"silver/event/event_date={target_dt}"
+
+    paginator = s3.get_paginator("list_objects_v2")
+    batch = []
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            batch.append({"Key": obj["Key"]})
+
+    if batch:
+        s3.delete_objects(Bucket=BUCKET, Delete={"Objects": batch})
+        print(f"삭제 완료: {len(batch)}개 파일")
+    else:
+        print(f"삭제할 파일 없음: {prefix}")
 
 
 with DAG(
@@ -38,7 +55,15 @@ with DAG(
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],
 ) as dag:
-    # t1: silver Table 없을 경우에 생성 (구조만)
+    # t1: 멱등성 보장, DAG 수동으로 여러번 실행시
+    #     S3 silver/event/event_date=''/ 파일이 여러개 생성될 수 있음
+    cleanup_task = PythonOperator(
+        task_id = 'cleanup_silver_partition',
+        python_callable = cleanup_silver_partition,
+        op_kwargs = {"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+    )
+
+    # t2: silver Table 없을 경우에 생성 (구조만)
     create_silver_table = AthenaOperator(
         task_id = 'create_silver_table_if_not_exists',
         query= """
@@ -75,7 +100,7 @@ with DAG(
     )
 
     
-    # t2: 특정 시간대 데이터 추출해서 silver 테이블에 삽입 (execution_date 활용)
+    # t3: 특정 시간대 데이터 추출해서 silver 테이블에 삽입 (execution_date 활용)
     insert_silver = AthenaOperator(
         task_id="insert_silver",
         query="""
@@ -133,4 +158,4 @@ with DAG(
         output_location=ATHENA_RESULTS
     )
 
-    create_silver_table >> insert_silver
+    cleanup_task >> create_silver_table >> insert_silver
