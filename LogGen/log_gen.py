@@ -162,11 +162,7 @@ def create_event(ctx, action, step_idx, item_id, search_keyword):
         "event_id": str(uuid.uuid4()),
         "event_timestamp": (
             ctx["session_start_time"] + timedelta(seconds=random.randint(3, 12) * step_idx)
-<<<<<<< HEAD
-        ).isoformat(),
-=======
         ).strftime('%Y-%m-%d %H:%M:%S'),
->>>>>>> c52623a (Feat: sales_silver.py 초안 완성, docker-compose.yaml 수정( .env추가))
         "user_id": ctx["user_id"],
         "session_id": ctx["session_id"],
         "item_id": None if action == "search" else item_id,
