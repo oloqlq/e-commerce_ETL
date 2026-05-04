@@ -108,6 +108,7 @@ def extract_purchase_to_temp(target_dt: str, temp_file_uri: str, **kwargs):
             user_id,
             region,
             item_id,
+            quantity,
             discount_amount,
             payment_method
         FROM {DATABASE_BRONZE}.{BRONZE_SALES_TABLE}
@@ -136,10 +137,12 @@ def transform_and_load_sales_silver(target_dt: str, temp_file_uri: str, final_fi
     df_final = df.assign(
         order_id=df["event_id"],
         order_time=df["event_timestamp"],
-        total_amount=df["unit_price"] - df["discount_amount"],
+        total_amount= (df["unit_price"] * df["quantity"]) - df["discount_amount"],
     )[[
         "order_id", "user_id", "order_time", "region",
-        "item_id", "category", "unit_price", "discount_amount",
+        "item_id", "category", "unit_price",
+        "quantity",
+        "discount_amount",
         "total_amount", "payment_method",
     ]].copy()
     _upload_parquet(df_final, final_file_uri)
