@@ -23,12 +23,12 @@ def cleanup_gold_partition(target_dt, **kwargs):
         f"gold/campaign/event_date={target_dt}/",
         f"gold/item/event_date={target_dt}/",
 
-        f"gold/sales_daily/order_date={target_dt}/",
-        f"gold/sales_product/order_date={target_dt}/",
-        f"gold/sales_category/order_date={target_dt}/",
-        f"gold/sales_user/order_date={target_dt}/",
-        f"gold/sales_payment/order_date={target_dt}/",
-        f"gold/sales_region/order_date={target_dt}/",
+        f"gold/sales_daily/dt={target_dt}/",
+        f"gold/sales_product/dt={target_dt}/",
+        f"gold/sales_category/dt={target_dt}/",
+        f"gold/sales_user/dt={target_dt}/",
+        f"gold/sales_payment/dt={target_dt}/",
+        f"gold/sales_region/dt={target_dt}/",
     ]
 
     for prefix in prefixes:
@@ -445,7 +445,6 @@ with DAG(
             LEFT JOIN {{ params.database_silver }}.silver_sales s
                 ON e.item_id = s.item_id
                AND e.user_id = s.user_id
-               AND e.event_date = s.order_date
                AND e.action = 'purchase'
             WHERE e.event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
               AND e.item_id IS NOT NULL
@@ -474,11 +473,10 @@ with DAG(
                 COUNT(DISTINCT user_id) AS user_count,
                 CAST(SUM(quantity) AS BIGINT) AS total_quantity,
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                order_date
+                DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE order_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND order_status = 'completed'
-            GROUP BY order_date;
+            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            GROUP BY DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -499,12 +497,11 @@ with DAG(
                 COUNT(DISTINCT order_id) AS order_count,
                 CAST(SUM(quantity) AS BIGINT) AS total_quantity,
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                order_date
+                DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE order_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND order_status = 'completed'
+            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
               AND item_id IS NOT NULL
-            GROUP BY item_id, order_date;
+            GROUP BY item_id, DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -526,12 +523,11 @@ with DAG(
                 COUNT(DISTINCT order_id) AS order_count,
                 CAST(SUM(quantity) AS BIGINT) AS total_quantity,
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                order_date
+                DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE order_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND order_status = 'completed'
+            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
               AND category IS NOT NULL
-            GROUP BY category, order_date;
+            GROUP BY category, DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -552,12 +548,11 @@ with DAG(
                 CAST(SUM(total_amount) AS BIGINT) AS total_spent,
                 CAST(SUM(quantity) AS BIGINT) AS total_quantity,
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                order_date
+                DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE order_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND order_status = 'completed'
+            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
               AND user_id IS NOT NULL
-            GROUP BY user_id, order_date;
+            GROUP BY user_id, DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -579,12 +574,11 @@ with DAG(
                 CAST(SUM(total_amount) AS BIGINT) AS total_revenue,
                 COUNT(DISTINCT order_id) AS order_count,
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                order_date
+                DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE order_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND order_status = 'completed'
+            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
               AND payment_method IS NOT NULL
-            GROUP BY payment_method, order_date;
+            GROUP BY payment_method, DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -606,12 +600,11 @@ with DAG(
                 COUNT(DISTINCT order_id) AS order_count,
                 COUNT(DISTINCT user_id) AS user_count,
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                order_date
+                DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE order_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND order_status = 'completed'
+            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
               AND region IS NOT NULL
-            GROUP BY region, order_date;
+            GROUP BY region, DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
