@@ -27,7 +27,7 @@ def cleanup_silver_partition(target_dt, **kwargs):
     hook = S3Hook(aws_conn_id="aws_default")
     s3 = hook.get_conn()
     
-    prefix = f"silver/event/event_date={target_dt}"
+    prefix = f"silver/event/event_date={target_dt}/"
 
     paginator = s3.get_paginator("list_objects_v2")
     batch = []
@@ -50,7 +50,7 @@ with DAG(
         "retries":     1,                     # 실패시 재시도 횟수
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
     },
-    schedule_interval="0 0 * * *",
+    schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],
