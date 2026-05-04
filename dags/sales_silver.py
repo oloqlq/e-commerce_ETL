@@ -167,7 +167,7 @@ _TEMP_URI = f"{_TEMP_BASE_URI}/dt={_TARGET_DT}/sales_temp_{_TARGET_DT}.parquet"
 _FINAL_URI = f"{_FINAL_BASE_URI}/dt={_TARGET_DT}/sales_silver_{_TARGET_DT}.parquet"
 
 with DAG(
-    dag_id="silver_sales_dag",
+    dag_id="bronze_to_silver_sales",
     description="bronze_sales -> silver_sales daily batch",
     default_args=DEFAULT_ARGS,
     schedule_interval="0 0 * * *",
