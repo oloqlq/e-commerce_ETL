@@ -13,9 +13,6 @@ import time
 
 load_dotenv()
 
-# =========================
-# ENV / CONFIG
-# =========================
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = os.getenv("AWS_DEFAULT_REGION")
@@ -33,10 +30,6 @@ DEFAULT_ARGS = {
     "retry_delay": timedelta(minutes=3),
 }
 
-
-# =========================
-# HELPERS
-# =========================
 def _get_session():
     return boto3.Session(
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -100,9 +93,6 @@ def _read_parquet(s3_uri: str) -> pd.DataFrame:
     body = _get_session().client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
     return pd.read_parquet(io.BytesIO(body), engine="pyarrow")
 
-# =========================
-# TASKS
-# =========================
 def cleanup_previous_partitions(target_dt: str, **kwargs):
     s3_client = _get_session().client("s3")
 
@@ -118,6 +108,7 @@ def extract_purchase_to_temp(target_dt: str, temp_file_uri: str, **kwargs):
             user_id,
             region,
             item_id,
+            quantity,
             discount_amount,
             payment_method
         FROM {DATABASE_BRONZE}.{BRONZE_SALES_TABLE}
@@ -146,18 +137,17 @@ def transform_and_load_sales_silver(target_dt: str, temp_file_uri: str, final_fi
     df_final = df.assign(
         order_id=df["event_id"],
         order_time=df["event_timestamp"],
-        total_amount=df["unit_price"] - df["discount_amount"],
+        total_amount= (df["unit_price"] * df["quantity"]) - df["discount_amount"],
     )[[
         "order_id", "user_id", "order_time", "region",
-        "item_id", "category", "unit_price", "discount_amount",
+        "item_id", "category", "unit_price",
+        "quantity",
+        "discount_amount",
         "total_amount", "payment_method",
     ]].copy()
     _upload_parquet(df_final, final_file_uri)
     print(f"[transform] saved {len(df_final)} rows -> {final_file_uri}")
 
-# =========================
-# DAG
-# =========================
 _TARGET_DT = "{{ data_interval_start | ds }}"
 
 _TEMP_BASE_URI = f"s3://{S3_BUCKET}/silver/sales_temp"
