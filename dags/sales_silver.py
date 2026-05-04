@@ -160,7 +160,7 @@ with DAG(
     dag_id="bronze_to_silver_sales",
     description="bronze_sales -> silver_sales daily batch",
     default_args=DEFAULT_ARGS,
-    schedule_interval="0 0 * * *",
+    schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],

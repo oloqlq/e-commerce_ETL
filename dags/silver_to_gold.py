@@ -46,7 +46,7 @@ def cleanup_gold_partition(target_dt, **kwargs):
 
 with DAG(
     dag_id="silver_to_gold",
-    schedule_interval="0 0 * * *",
+    schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["gold", "event", "sales"],
