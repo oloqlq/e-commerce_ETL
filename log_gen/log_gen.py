@@ -174,6 +174,7 @@ def create_event(ctx, action, step_idx, item_id, search_keyword):
         "campaign_id": ctx["campaign_id"],
         "search_keyword": search_keyword if action == "search" else None,
         "page_type": random.choice(PAGE_TYPES[action]),
+        "quantity": random.randint(1, 5) if is_purchase else None,
         "discount_amount": random.choices(DISCOUNTS, weights=DISCOUNT_WEIGHTS, k=1)[0] if is_purchase else None,
         "payment_method": random.choices(PAYMENT_METHODS, weights=PAYMENT_WEIGHTS, k=1)[0] if is_purchase else None,
     }
