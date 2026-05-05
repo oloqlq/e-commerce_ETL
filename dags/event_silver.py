@@ -2,8 +2,11 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.operators.athena import AthenaOperator
+from airflow.utils.email import send_email
+import logging
+import requests
 from datetime import datetime, timedelta
-import pandas as pd
+import os
 
 '''
     Airflow에서 AWS 연결 설정
@@ -23,11 +26,16 @@ SILVER_S3_PATH = 's3://de-ai-14-827913617635-ap-northeast-1-an/silver/event/'
 ATHENA_RESULTS = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 SILVER_TBL_NAME = 'silver_event'
 
+logger = logging.getLogger(__name__)
+
 def cleanup_silver_partition(target_dt, **kwargs):
+    logger.info(f"[START] cleanup_silver_partition | target_dt={target_dt}")
+
     hook = S3Hook(aws_conn_id="aws_default")
     s3 = hook.get_conn()
     
     prefix = f"silver/event/event_date={target_dt}"
+    logger.info(f"S3 prefix: {prefix}")
 
     paginator = s3.get_paginator("list_objects_v2")
     batch = []
@@ -37,10 +45,41 @@ def cleanup_silver_partition(target_dt, **kwargs):
 
     if batch:
         s3.delete_objects(Bucket=BUCKET, Delete={"Objects": batch})
-        print(f"삭제 완료: {len(batch)}개 파일")
+        logger.info(f"[DELETE] {len(batch)} files removed")
     else:
-        print(f"삭제할 파일 없음: {prefix}")
+        logger.warning(f"[SKIP] No files to delete: {prefix}")
 
+
+    logger.info(f"[END] cleanup_silver_partition")
+
+def alert_email(context):
+    subject = f"[Airflow] Task Faild: {context['task_instance'].task_id}"
+    body = f"""
+        DAG: {context['dag'].dag_id}
+        Task: {context['task_instance'].task_id}
+        Execution Time: {context['execution_date']}
+        Log: {context['task_instance'].log_url}
+    """
+    send_email(to=[os.getenv("ALERT_EMAIL")], subject=subject, html_content=body)
+
+def alert_slack(context):
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    msg = f"""
+        Task Faild
+        DAG: {context['dag'].dag_id}
+        Task: {context['task_instance'].task_id}
+        Time: {context['execution_date']}
+        Log: {context['task_instance'].log_url}
+    """
+
+    logger.error(f"[ALERT] Sending Slack alert for {context['task_instance'].task_id}")
+
+    requests.post(webhook_url, json={"text": msg})
+
+def alert_all(context):
+    logger.error(f"[ALERT] Triggered for DAG={context['dag'].dag_id}")
+    alert_email(context)
+    alert_slack(context)
 
 with DAG(
     dag_id="bronze_to_silver_event",
@@ -49,11 +88,13 @@ with DAG(
         "owner":       "airflow",             # DAG 소유자 (Airflow UI에 표시)
         "retries":     1,                     # 실패시 재시도 횟수
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
+        "on_failure_callback": alert_all,
     },
     schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],
+    on_failure_callback=alert_all
 ) as dag:
     # t1: 멱등성 보장, DAG 수동으로 여러번 실행시
     #     S3 silver/event/event_date=''/ 파일이 여러개 생성될 수 있음
