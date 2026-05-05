@@ -2,7 +2,11 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.operators.athena import AthenaOperator
+from airflow.utils.email import send_email
+import logging
+import requests
 from datetime import datetime, timedelta
+import os
 
 DATABASE_BRONZE = 'ecommerce_bronze_db'
 DATABASE_SILVER = 'ecommerce_silver_db'
@@ -10,6 +14,8 @@ BUCKET          = 'de-ai-14-827913617635-ap-northeast-1-an'
 SILVER_S3_PATH  = 's3://de-ai-14-827913617635-ap-northeast-1-an/silver/sales/'
 ATHENA_RESULTS  = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 SILVER_TBL_NAME = 'silver_sales'
+
+logger = logging.getLogger(__name__)
 
 # ── cleanup ───────────────────────────────────────
 def cleanup_silver_sales_partition(target_dt, **kwargs):
@@ -30,6 +36,34 @@ def cleanup_silver_sales_partition(target_dt, **kwargs):
     else:
         print(f"삭제할 파일 없음: {prefix}")
 
+def alert_email(context):
+    subject = f"[Airflow] Task Faild: {context['task_instance'].task_id}"
+    body = f"""
+        DAG: {context['dag'].dag_id}
+        Task: {context['task_instance'].task_id}
+        Execution Time: {context['execution_date']}
+        Log: {context['task_instance'].log_url}
+    """
+    send_email(to=[os.getenv("ALERT_EMAIL")], subject=subject, html_content=body)
+
+def alert_slack(context):
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    msg = f"""
+        Task Faild
+        DAG: {context['dag'].dag_id}
+        Task: {context['task_instance'].task_id}
+        Time: {context['execution_date']}
+        Log: {context['task_instance'].log_url}
+    """
+
+    logger.error(f"[ALERT] Sending Slack alert for {context['task_instance'].task_id}")
+
+    requests.post(webhook_url, json={"text": msg})
+
+def alert_all(context):
+    logger.error(f"[ALERT] Triggered for DAG={context['dag'].dag_id}")
+    alert_email(context)
+    alert_slack(context)
 
 with DAG(
     dag_id="bronze_to_silver_sales",
@@ -43,6 +77,7 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
+    on_failure_callback=alert_all
 ) as dag:
 
     # t1: cleanup
