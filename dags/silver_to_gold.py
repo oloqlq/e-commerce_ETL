@@ -4,6 +4,10 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.operators.athena import AthenaOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from datetime import datetime
+from airflow.utils.email import send_email
+import logging
+import requests
+import os
 
 DATABASE_SILVER = 'ecommerce_silver_db'
 DATABASE_GOLD   = 'ecommerce_gold_db'
@@ -11,6 +15,7 @@ GOLD_S3_PATH    = 's3://de-ai-14-827913617635-ap-northeast-1-an/gold/'
 ATHENA_RESULTS  = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 BUCKET = 'de-ai-14-827913617635-ap-northeast-1-an'
 
+logger = logging.getLogger(__name__)
 
 def cleanup_gold_partition(target_dt, **kwargs):
     hook = S3Hook(aws_conn_id="aws_default")
@@ -44,12 +49,42 @@ def cleanup_gold_partition(target_dt, **kwargs):
             print(f"삭제 완료: {prefix} / {len(batch)}개 파일")
 
 
+def alert_email(context):
+    subject = f"[Airflow] Task Faild: {context['task_instance'].task_id}"
+    body = f"""
+        DAG: {context['dag'].dag_id}
+        Task: {context['task_instance'].task_id}
+        Execution Time: {context['execution_date']}
+        Log: {context['task_instance'].log_url}
+    """
+    send_email(to=[os.getenv("ALERT_EMAIL")], subject=subject, html_content=body)
+
+def alert_slack(context):
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    msg = f"""
+        Task Faild
+        DAG: {context['dag'].dag_id}
+        Task: {context['task_instance'].task_id}
+        Time: {context['execution_date']}
+        Log: {context['task_instance'].log_url}
+    """
+
+    logger.error(f"[ALERT] Sending Slack alert for {context['task_instance'].task_id}")
+
+    requests.post(webhook_url, json={"text": msg})
+
+def alert_all(context):
+    logger.error(f"[ALERT] Triggered for DAG={context['dag'].dag_id}")
+    alert_email(context)
+    alert_slack(context)
+
 with DAG(
     dag_id="silver_to_gold",
     schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["gold", "event", "sales"],
+    on_failure_callback=alert_all
 ) as dag:
 
     wait_for_event_silver = ExternalTaskSensor(
