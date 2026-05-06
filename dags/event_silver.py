@@ -164,7 +164,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
         "on_failure_callback": alert_all,
     },
-    schedule_interval="10 0 * * *",
+    schedule_interval="25 0 * * *",
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],
@@ -174,7 +174,7 @@ with DAG(
     check_bronze = PythonOperator(
         task_id = "check_bronze_data",
         python_callable=check_bronze_data,
-        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+        op_kwargs={"target_dt": "{{ ds }}"}
     )
 
     # t2: 멱등성 보장, DAG 수동으로 여러번 실행시
@@ -284,7 +284,7 @@ with DAG(
     validate_task = PythonOperator(
     task_id="validate_event_silver",
     python_callable=validate_event_silver,
-    op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+    op_kwargs={"target_dt": "{{ ds }}"}
 )
 
     check_bronze >> cleanup_task >> create_silver_table >> insert_silver >> validate_task

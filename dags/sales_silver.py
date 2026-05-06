@@ -150,7 +150,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),
         "on_failure_callback": alert_all
     },
-    schedule_interval="10 0 * * *",
+    schedule_interval="25 0 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
@@ -159,7 +159,7 @@ with DAG(
     check_bronze = PythonOperator(
         task_id = "check_bronze_data",
         python_callable=check_bronze_data,
-        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+        op_kwargs={"target_dt": "{{ ds }}"}
     )
 
     # t2: cleanup
@@ -241,9 +241,8 @@ with DAG(
     validate_task = PythonOperator(
     task_id="validate_sales_silver",
     python_callable=validate_sales_silver,
-    op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+    op_kwargs={"target_dt": "{{ ds }}"}
     )
 
     check_bronze >> cleanup_task >> create_silver_sales >> insert_silver_sales >> validate_task
 
-    

@@ -85,7 +85,7 @@ with DAG(
         "retries":     0,
         "on_failure_callback": alert_all
     },
-    schedule_interval="0 10 * * *",
+    schedule_interval="25 0 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["gold", "event", "sales"],
