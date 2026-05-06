@@ -117,9 +117,8 @@ def validate_sales_silver(target_dt, **kwargs):
         body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
         dfs.append(pd.read_parquet(io.BytesIO(body), engine="pyarrow"))
 
-    df = pd.concat(dfs, ignore_index=True)
-
     from great_expectations.dataset import PandasDataset
+    df = pd.concat(dfs, ignore_index=True)
     ge_df = PandasDataset(df)
 
     ge_df.expect_column_values_to_not_be_null("order_id")
