@@ -1,3 +1,6 @@
+#######################################
+# import, config
+#######################################
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
@@ -7,6 +10,9 @@ import logging
 import requests
 from datetime import datetime, timedelta
 import os
+import great_expectations as ge
+import pandas as pd
+import io
 
 '''
     Airflow에서 AWS 연결 설정
@@ -27,6 +33,12 @@ ATHENA_RESULTS = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 SILVER_TBL_NAME = 'silver_event'
 
 logger = logging.getLogger(__name__)
+
+
+
+#######################################
+# call_back functions
+#######################################
 
 def check_bronze_data(target_dt, **kwargs):
     hook = S3Hook(aws_conn_id="aws_default")
@@ -94,6 +106,54 @@ def alert_all(context):
     logger.error(f"[ALERT] Triggered for DAG={context['dag'].dag_id}")
     alert_email(context)
     alert_slack(context)
+
+
+'''
+데이터 품질 검증 기능 추가
+'''
+def validate_event_silver(target_dt, **kwargs):
+    hook = S3Hook(aws_conn_id="aws_default")
+    s3 = hook.get_conn()
+
+    prefix = f"silver/event/event_date={target_dt}/"
+    response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+
+    parquet_keys = [
+        obj["Key"]
+        for obj in response.get("Contents", [])
+        if obj["Key"].endswith(".parquet")
+    ]
+
+    if not parquet_keys:
+        raise ValueError(f"검증 대상 silver/event 데이터 없음: {target_dt}")
+
+    dfs = []
+    for key in parquet_keys:
+        body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        dfs.append(pd.read_parquet(io.BytesIO(body), engine="pyarrow"))
+
+    df = pd.concat(dfs, ignore_index=True)
+
+    ge_df = ge.from_pandas(df)
+
+    ge_df.expect_column_values_to_not_be_null("event_id")
+    ge_df.expect_column_values_to_be_in_set(
+        "action",
+        ["view", "click", "add_to_cart", "wishlist", "search", "purchase"]
+    )
+    ge_df.expect_column_values_to_be_between("event_hour", 0, 23)
+
+    results = ge_df.validate()
+
+    if not results["success"]:
+        raise ValueError(f"event silver 데이터 품질 검증 실패: {target_dt}")
+
+    print(f"[검증 완료] event silver 데이터 품질 이상 없음: {target_dt}")
+
+
+#######################################
+# DAG 
+#######################################
 
 with DAG(
     dag_id="bronze_to_silver_event",
@@ -220,4 +280,11 @@ with DAG(
         output_location=ATHENA_RESULTS
     )
 
-    check_bronze >> cleanup_task >> create_silver_table >> insert_silver
+    # t5 : 데이터 품질 검증 
+    validate_task = PythonOperator(
+    task_id="validate_event_silver",
+    python_callable=validate_event_silver,
+    op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+)
+
+    check_bronze >> cleanup_task >> create_silver_table >> insert_silver >> validate_task

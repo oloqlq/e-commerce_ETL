@@ -1,3 +1,7 @@
+##########################################
+# import, config
+##########################################
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
@@ -7,6 +11,9 @@ import logging
 import requests
 from datetime import datetime, timedelta
 import os
+import great_expectations as ge
+import pandas as pd
+import io
 
 DATABASE_BRONZE = 'ecommerce_bronze_db'
 DATABASE_SILVER = 'ecommerce_silver_db'
@@ -16,6 +23,13 @@ ATHENA_RESULTS  = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 SILVER_TBL_NAME = 'silver_sales'
 
 logger = logging.getLogger(__name__)
+
+
+
+
+#######################################
+# call_back functions
+#######################################
 
 def check_bronze_data(target_dt, **kwargs):
     hook = S3Hook(aws_conn_id="aws_default")
@@ -79,6 +93,54 @@ def alert_all(context):
     alert_email(context)
     alert_slack(context)
 
+
+'''
+데이터 품질 검증 기능 추가
+'''
+def validate_sales_silver(target_dt, **kwargs):
+    hook = S3Hook(aws_conn_id="aws_default")
+    s3 = hook.get_conn()
+
+    prefix = f"silver/sales/dt={target_dt}/"
+    response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+
+    parquet_keys = [
+        obj["Key"]
+        for obj in response.get("Contents", [])
+        if obj["Key"].endswith(".parquet")
+    ]
+
+    if not parquet_keys:
+        raise ValueError(f"검증 대상 silver/sales 데이터 없음: {target_dt}")
+
+    dfs = []
+    for key in parquet_keys:
+        body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        dfs.append(pd.read_parquet(io.BytesIO(body), engine="pyarrow"))
+
+    df = pd.concat(dfs, ignore_index=True)
+
+    ge_df = ge.from_pandas(df)
+
+    ge_df.expect_column_values_to_not_be_null("order_id")
+    ge_df.expect_column_values_to_not_be_null("order_time")
+    ge_df.expect_column_values_to_not_be_null("item_id")
+    ge_df.expect_column_values_to_not_be_null("category")
+    ge_df.expect_column_values_to_be_between("unit_price", min_value=1)
+    ge_df.expect_column_values_to_be_between("quantity", min_value=1)
+    ge_df.expect_column_values_to_be_between("total_amount", min_value=0)
+
+    results = ge_df.validate()
+
+    if not results["success"]:
+        raise ValueError(f"sales silver 데이터 품질 검증 실패: {target_dt}")
+
+    print(f"[검증 완료] sales silver 데이터 품질 이상 없음: {target_dt}")
+
+
+#######################################
+# DAG 
+#######################################
 with DAG(
     dag_id="bronze_to_silver_sales",
     description="sales silver 테이블 구성 및 데이터 증분 작업",
@@ -175,4 +237,13 @@ with DAG(
         output_location=ATHENA_RESULTS,
     )
 
-    check_bronze >> cleanup_task >> create_silver_sales >> insert_silver_sales
+    # t5: 데이터 품질 검증
+    validate_task = PythonOperator(
+    task_id="validate_sales_silver",
+    python_callable=validate_sales_silver,
+    op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+    )
+
+    check_bronze >> cleanup_task >> create_silver_sales >> insert_silver_sales >> validate_task
+
+    
