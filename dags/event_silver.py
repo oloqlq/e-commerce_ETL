@@ -28,6 +28,20 @@ SILVER_TBL_NAME = 'silver_event'
 
 logger = logging.getLogger(__name__)
 
+def check_bronze_data(target_dt, **kwargs):
+    hook = S3Hook(aws_conn_id="aws_default")
+    s3 = hook.get_conn()
+
+    response = s3.list_objects_v2(
+        Bucket = BUCKET,
+        Prefix = f"raw/{target_dt[:4]}/{target_dt[5:7]}/{target_dt[8:10]}/"
+    )
+
+    if response.get("KeyCount", 0) == 0:
+        raise ValueError(f"브론즈 데이터 없음: {target_dt}")
+    
+    print(f"브론즈 데이터 확인: {response['KeyCount']}개 파일")
+
 def cleanup_silver_partition(target_dt, **kwargs):
     logger.info(f"[START] cleanup_silver_partition | target_dt={target_dt}")
 
@@ -86,7 +100,7 @@ with DAG(
     description= "event silver 테이블 구성 및 데이터 증분 작업",
     default_args={
         "owner":       "airflow",             # DAG 소유자 (Airflow UI에 표시)
-        "retries":     1,                     # 실패시 재시도 횟수
+        "retries":     0,                     # 실패시 재시도 횟수
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
         "on_failure_callback": alert_all,
     },
@@ -94,9 +108,16 @@ with DAG(
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],
-    on_failure_callback=alert_all
 ) as dag:
-    # t1: 멱등성 보장, DAG 수동으로 여러번 실행시
+    
+    # t1: 브론즈 데이터 확인
+    check_bronze = PythonOperator(
+        task_id = "check_bronze_data",
+        python_callable=check_bronze_data,
+        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+    )
+
+    # t2: 멱등성 보장, DAG 수동으로 여러번 실행시
     #     S3 silver/event/event_date=''/ 파일이 여러개 생성될 수 있음
     cleanup_task = PythonOperator(
         task_id = 'cleanup_silver_partition',
@@ -104,7 +125,7 @@ with DAG(
         op_kwargs = {"target_dt": "{{ macros.ds_add(ds, -1) }}"}
     )
 
-    # t2: silver Table 없을 경우에 생성 (구조만)
+    # t3: silver Table 없을 경우에 생성 (구조만)
     create_silver_table = AthenaOperator(
         task_id = 'create_silver_table_if_not_exists',
         query= """
@@ -141,7 +162,7 @@ with DAG(
     )
 
     
-    # t3: 특정 시간대 데이터 추출해서 silver 테이블에 삽입 (execution_date 활용)
+    # t4: 특정 시간대 데이터 추출해서 silver 테이블에 삽입 (execution_date 활용)
     insert_silver = AthenaOperator(
         task_id="insert_silver",
         query="""
@@ -199,4 +220,4 @@ with DAG(
         output_location=ATHENA_RESULTS
     )
 
-    cleanup_task >> create_silver_table >> insert_silver
+    check_bronze >> cleanup_task >> create_silver_table >> insert_silver

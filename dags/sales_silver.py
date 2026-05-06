@@ -17,6 +17,20 @@ SILVER_TBL_NAME = 'silver_sales'
 
 logger = logging.getLogger(__name__)
 
+def check_bronze_data(target_dt, **kwargs):
+    hook = S3Hook(aws_conn_id="aws_default")
+    s3 = hook.get_conn()
+
+    response = s3.list_objects_v2(
+        Bucket = BUCKET,
+        Prefix = f"raw/{target_dt[:4]}/{target_dt[5:7]}/{target_dt[8:10]}/"
+    )
+
+    if response.get("KeyCount", 0) == 0:
+        raise ValueError(f"브론즈 데이터 없음: {target_dt}")
+    
+    print(f"브론즈 데이터 확인: {response['KeyCount']}개 파일")
+
 # ── cleanup ───────────────────────────────────────
 def cleanup_silver_sales_partition(target_dt, **kwargs):
     hook = S3Hook(aws_conn_id="aws_default")
@@ -70,24 +84,30 @@ with DAG(
     description="sales silver 테이블 구성 및 데이터 증분 작업",
     default_args={
         "owner":       "airflow",
-        "retries":     1,
+        "retries":     0,
         "retry_delay": timedelta(minutes=5),
+        "on_failure_callback": alert_all
     },
     schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
-    on_failure_callback=alert_all
 ) as dag:
+    # t1: 브론즈 데이터 확인
+    check_bronze = PythonOperator(
+        task_id = "check_bronze_data",
+        python_callable=check_bronze_data,
+        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+    )
 
-    # t1: cleanup
+    # t2: cleanup
     cleanup_task = PythonOperator(
         task_id="cleanup_silver_sales_partition",
         python_callable=cleanup_silver_sales_partition,
         op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"},
     )
 
-    # t2: 테이블 없으면 생성
+    # t3: 테이블 없으면 생성
     create_silver_sales = AthenaOperator(
         task_id="create_silver_sales_if_not_exists",
         query="""
@@ -118,7 +138,7 @@ with DAG(
         output_location=ATHENA_RESULTS,
     )
 
-    # t3: 어제 데이터만 INSERT
+    # t4: 어제 데이터만 INSERT
     insert_silver_sales = AthenaOperator(
         task_id="insert_silver_sales",
         query="""
@@ -155,4 +175,4 @@ with DAG(
         output_location=ATHENA_RESULTS,
     )
 
-    cleanup_task >> create_silver_sales >> insert_silver_sales
+    check_bronze >> cleanup_task >> create_silver_sales >> insert_silver_sales

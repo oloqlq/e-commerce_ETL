@@ -80,11 +80,15 @@ def alert_all(context):
 
 with DAG(
     dag_id="silver_to_gold",
+    default_args={
+        "owner":       "airflow",
+        "retries":     0,
+        "on_failure_callback": alert_all
+    },
     schedule_interval="0 10 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["gold", "event", "sales"],
-    on_failure_callback=alert_all
 ) as dag:
 
     wait_for_event_silver = ExternalTaskSensor(
@@ -92,6 +96,7 @@ with DAG(
         external_dag_id="bronze_to_silver_event",
         external_task_id=None,
         allowed_states=["success"],
+        failed_states=["failed"],
         execution_date_fn=lambda dt: dt,
         timeout=3600,
         poke_interval=60,
@@ -103,6 +108,7 @@ with DAG(
         external_dag_id="bronze_to_silver_sales",
         external_task_id=None,
         allowed_states=["success"],
+        failed_states=["failed"],
         execution_date_fn=lambda dt: dt,
         timeout=3600,
         poke_interval=60,
