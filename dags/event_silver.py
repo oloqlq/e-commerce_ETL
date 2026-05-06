@@ -104,7 +104,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
         "on_failure_callback": alert_all,
     },
-    schedule_interval="0 10 * * *",
+    schedule_interval="10 0 * * *",
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],
@@ -122,7 +122,7 @@ with DAG(
     cleanup_task = PythonOperator(
         task_id = 'cleanup_silver_partition',
         python_callable = cleanup_silver_partition,
-        op_kwargs = {"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+        op_kwargs = {"target_dt": "{{ ds }}"}
     )
 
     # t3: silver Table 없을 경우에 생성 (구조만)
@@ -204,7 +204,7 @@ with DAG(
 
             WHERE CAST(
                 CAST(event_timestamp AS TIMESTAMP) AS DATE
-            ) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            ) = DATE('{{ ds }}')
 
             AND action IN (
                 'view','click','add_to_cart','wishlist','search','purchase'

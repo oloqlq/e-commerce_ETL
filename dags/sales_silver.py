@@ -88,7 +88,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),
         "on_failure_callback": alert_all
     },
-    schedule_interval="0 10 * * *",
+    schedule_interval="10 0 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
@@ -104,7 +104,7 @@ with DAG(
     cleanup_task = PythonOperator(
         task_id="cleanup_silver_sales_partition",
         python_callable=cleanup_silver_sales_partition,
-        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"},
+        op_kwargs={"target_dt": "{{ ds }}"},
     )
 
     # t3: 테이블 없으면 생성
@@ -164,7 +164,7 @@ with DAG(
             WHERE action = 'purchase'
             AND CAST(
                 CAST(s.event_timestamp AS TIMESTAMP) AS DATE
-            ) = DATE('{{ ds }}') - INTERVAL '1' DAY;
+            ) = DATE('{{ ds }}');
         """,
         params={
             'database_bronze': DATABASE_BRONZE,
