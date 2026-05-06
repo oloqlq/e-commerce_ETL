@@ -133,7 +133,8 @@ def validate_event_silver(target_dt, **kwargs):
 
     df = pd.concat(dfs, ignore_index=True)
 
-    ge_df = ge.from_pandas(df)
+    from great_expectations.dataset import PandasDataset
+    ge_df = PandasDataset(df)
 
     ge_df.expect_column_values_to_not_be_null("event_id")
     ge_df.expect_column_values_to_be_in_set(
@@ -163,7 +164,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
         "on_failure_callback": alert_all,
     },
-    schedule_interval="25 0 * * *",
+    schedule_interval="45 0 * * *",
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],

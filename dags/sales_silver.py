@@ -119,7 +119,8 @@ def validate_sales_silver(target_dt, **kwargs):
 
     df = pd.concat(dfs, ignore_index=True)
 
-    ge_df = ge.from_pandas(df)
+    from great_expectations.dataset import PandasDataset
+    ge_df = PandasDataset(df)
 
     ge_df.expect_column_values_to_not_be_null("order_id")
     ge_df.expect_column_values_to_not_be_null("order_time")
@@ -149,7 +150,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),
         "on_failure_callback": alert_all
     },
-    schedule_interval="25 0 * * *",
+    schedule_interval="45 0 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
