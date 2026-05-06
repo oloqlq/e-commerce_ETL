@@ -10,7 +10,6 @@ import logging
 import requests
 from datetime import datetime, timedelta
 import os
-import great_expectations as ge
 import pandas as pd
 import io
 
@@ -118,36 +117,51 @@ def validate_event_silver(target_dt, **kwargs):
     prefix = f"silver/event/event_date={target_dt}/"
     response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
 
-    parquet_keys = [
-    obj["Key"]
-    for obj in response.get("Contents", [])
-    if not obj["Key"].endswith("/")
+    file_keys = [
+        obj["Key"]
+        for obj in response.get("Contents", [])
+        if not obj["Key"].endswith("/") and not obj["Key"].endswith("_SUCCESS")
     ]
-    if not parquet_keys:
+
+    if not file_keys:
         raise ValueError(f"검증 대상 silver/event 데이터 없음: {target_dt}")
 
     dfs = []
-    for key in parquet_keys:
+    for key in file_keys:
         body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
         dfs.append(pd.read_parquet(io.BytesIO(body), engine="pyarrow"))
 
-    from great_expectations.dataset import PandasDataset
     df = pd.concat(dfs, ignore_index=True)
-    ge_df = PandasDataset(df)
 
-    ge_df.expect_column_values_to_not_be_null("event_id")
-    ge_df.expect_column_values_to_be_in_set(
-        "action",
-        ["view", "click", "add_to_cart", "wishlist", "search", "purchase"]
-    )
-    ge_df.expect_column_values_to_be_between("event_hour", 0, 23)
+    errors = []
 
-    results = ge_df.validate()
+    if df.empty:
+        errors.append("데이터프레임이 비어 있음")
 
-    if not results["success"]:
-        raise ValueError(f"event silver 데이터 품질 검증 실패: {target_dt}")
+    if "event_id" not in df.columns:
+        errors.append("event_id 컬럼 없음")
+    elif df["event_id"].isna().any():
+        errors.append(f"event_id NULL 존재: {int(df['event_id'].isna().sum())}건")
 
-    print(f"[검증 완료] event silver 데이터 품질 이상 없음: {target_dt}")
+    if "action" not in df.columns:
+        errors.append("action 컬럼 없음")
+    else:
+        allowed_actions = {"view", "click", "add_to_cart", "wishlist", "search", "purchase"}
+        invalid_action_mask = df["action"].isna() | ~df["action"].isin(allowed_actions)
+        if invalid_action_mask.any():
+            errors.append(f"허용되지 않은 action 존재: {int(invalid_action_mask.sum())}건")
+
+    if "event_hour" not in df.columns:
+        errors.append("event_hour 컬럼 없음")
+    else:
+        invalid_hour_mask = df["event_hour"].isna() | ~df["event_hour"].between(0, 23)
+        if invalid_hour_mask.any():
+            errors.append(f"event_hour 범위 오류 존재: {int(invalid_hour_mask.sum())}건")
+
+    if errors:
+        raise ValueError(f"event silver 데이터 품질 검증 실패 ({target_dt}) | " + " | ".join(errors))
+
+    print(f"[검증 완료] event silver 데이터 품질 이상 없음: {target_dt}, rows={len(df)}")
 
 
 #######################################
@@ -163,7 +177,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),  # 재시도 간격
         "on_failure_callback": alert_all,
     },
-    schedule_interval="45 0 * * *",
+    schedule_interval="20 1 * * *",
     start_date=datetime(2026, 1, 1),          # 언제부터 실행될 수 있는지
     catchup=False,                            # 밀린 날짜 실행할지
     tags=["silver", "event"],

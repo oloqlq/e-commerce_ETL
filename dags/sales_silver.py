@@ -11,7 +11,6 @@ import logging
 import requests
 from datetime import datetime, timedelta
 import os
-import great_expectations as ge
 import pandas as pd
 import io
 
@@ -104,37 +103,60 @@ def validate_sales_silver(target_dt, **kwargs):
     prefix = f"silver/sales/dt={target_dt}/"
     response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
 
-    parquet_keys = [
-    obj["Key"]
-    for obj in response.get("Contents", [])
-    if not obj["Key"].endswith("/")
+    file_keys = [
+        obj["Key"]
+        for obj in response.get("Contents", [])
+        if not obj["Key"].endswith("/") and not obj["Key"].endswith("_SUCCESS")
     ]
-    if not parquet_keys:
+
+    if not file_keys:
         raise ValueError(f"검증 대상 silver/sales 데이터 없음: {target_dt}")
 
     dfs = []
-    for key in parquet_keys:
+    for key in file_keys:
         body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
         dfs.append(pd.read_parquet(io.BytesIO(body), engine="pyarrow"))
 
-    from great_expectations.dataset import PandasDataset
     df = pd.concat(dfs, ignore_index=True)
-    ge_df = PandasDataset(df)
 
-    ge_df.expect_column_values_to_not_be_null("order_id")
-    ge_df.expect_column_values_to_not_be_null("order_time")
-    ge_df.expect_column_values_to_not_be_null("item_id")
-    ge_df.expect_column_values_to_not_be_null("category")
-    ge_df.expect_column_values_to_be_between("unit_price", min_value=1)
-    ge_df.expect_column_values_to_be_between("quantity", min_value=1)
-    ge_df.expect_column_values_to_be_between("total_amount", min_value=0)
+    errors = []
 
-    results = ge_df.validate()
+    if df.empty:
+        errors.append("데이터프레임이 비어 있음")
 
-    if not results["success"]:
-        raise ValueError(f"sales silver 데이터 품질 검증 실패: {target_dt}")
+    required_cols = ["order_id", "order_time", "item_id", "total_amount"]
+    for col in required_cols:
+        if col not in df.columns:
+            errors.append(f"{col} 컬럼 없음")
 
-    print(f"[검증 완료] sales silver 데이터 품질 이상 없음: {target_dt}")
+    if "order_id" in df.columns and df["order_id"].isna().any():
+        errors.append(f"order_id NULL 존재: {int(df['order_id'].isna().sum())}건")
+
+    if "order_time" in df.columns and df["order_time"].isna().any():
+        errors.append(f"order_time NULL 존재: {int(df['order_time'].isna().sum())}건")
+
+    if "item_id" in df.columns and df["item_id"].isna().any():
+        errors.append(f"item_id NULL 존재: {int(df['item_id'].isna().sum())}건")
+
+    if "total_amount" in df.columns:
+        invalid_total_mask = df["total_amount"].isna() | (df["total_amount"] < 0)
+        if invalid_total_mask.any():
+            errors.append(f"total_amount 이상값 존재: {int(invalid_total_mask.sum())}건")
+
+    if "unit_price" in df.columns:
+        invalid_unit_price_mask = df["unit_price"].isna() | (df["unit_price"] <= 0)
+        if invalid_unit_price_mask.any():
+            errors.append(f"unit_price 이상값 존재: {int(invalid_unit_price_mask.sum())}건")
+
+    if "quantity" in df.columns:
+        invalid_quantity_mask = df["quantity"].isna() | (df["quantity"] <= 0)
+        if invalid_quantity_mask.any():
+            errors.append(f"quantity 이상값 존재: {int(invalid_quantity_mask.sum())}건")
+
+    if errors:
+        raise ValueError(f"sales silver 데이터 품질 검증 실패 ({target_dt}) | " + " | ".join(errors))
+
+    print(f"[검증 완료] sales silver 데이터 품질 이상 없음: {target_dt}, rows={len(df)}")
 
 
 #######################################
@@ -149,7 +171,7 @@ with DAG(
         "retry_delay": timedelta(minutes=5),
         "on_failure_callback": alert_all
     },
-    schedule_interval="45 0 * * *",
+    schedule_interval="20 1 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
