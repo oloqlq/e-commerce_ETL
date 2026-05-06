@@ -119,11 +119,10 @@ def validate_event_silver(target_dt, **kwargs):
     response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
 
     parquet_keys = [
-        obj["Key"]
-        for obj in response.get("Contents", [])
-        if obj["Key"].endswith(".parquet")
+    obj["Key"]
+    for obj in response.get("Contents", [])
+    if not obj["Key"].endswith("/")
     ]
-
     if not parquet_keys:
         raise ValueError(f"검증 대상 silver/event 데이터 없음: {target_dt}")
 
