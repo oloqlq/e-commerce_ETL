@@ -32,6 +32,7 @@ x-airflow-common: &airflow-common
       pyarrow
       s3fs
       awswrangler
+      great_expectations # 데이터 품질 체크 라이브러리 추가 (5/6)
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
