@@ -80,7 +80,7 @@ def alert_all(context):
 
 with DAG(
     dag_id="silver_to_gold",
-    schedule_interval="0 10 * * *",
+    schedule_interval="10 0 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["gold", "event", "sales"],
@@ -112,7 +112,7 @@ with DAG(
     cleanup_gold = PythonOperator(
         task_id="cleanup_gold",
         python_callable=cleanup_gold_partition,
-        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+        op_kwargs={"target_dt": "{{ ds }}"}
     )
 
     # =========================
@@ -381,7 +381,7 @@ with DAG(
                 COUNT(DISTINCT session_id) AS session_count,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
             GROUP BY action, event_date;
         """,
         params={
@@ -402,7 +402,7 @@ with DAG(
                 COUNT(*) AS cnt,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
             GROUP BY device, action, event_date;
         """,
         params={
@@ -422,7 +422,7 @@ with DAG(
                 COUNT(*) AS count_search_keyword,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
               AND action = 'search'
             GROUP BY search_keyword, event_date;
         """,
@@ -448,7 +448,7 @@ with DAG(
                 ) AS conversion_rate,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
               AND campaign_id IS NOT NULL
             GROUP BY campaign_id, event_date;
         """,
@@ -481,7 +481,7 @@ with DAG(
                 ON e.item_id = s.item_id
                AND e.user_id = s.user_id
                AND e.action = 'purchase'
-            WHERE e.event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE e.event_date = DATE('{{ ds }}')
               AND e.item_id IS NOT NULL
             GROUP BY e.item_id, e.event_date;
         """,
@@ -510,7 +510,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
             GROUP BY DATE(order_time);
         """,
         params={
@@ -534,7 +534,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND item_id IS NOT NULL
             GROUP BY item_id, DATE(order_time);
         """,
@@ -560,7 +560,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND category IS NOT NULL
             GROUP BY category, DATE(order_time);
         """,
@@ -585,7 +585,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND user_id IS NOT NULL
             GROUP BY user_id, DATE(order_time);
         """,
@@ -611,7 +611,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND payment_method IS NOT NULL
             GROUP BY payment_method, DATE(order_time);
         """,
@@ -637,7 +637,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND region IS NOT NULL
             GROUP BY region, DATE(order_time);
         """,
