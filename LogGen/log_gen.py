@@ -4,11 +4,12 @@ import boto3
 import uuid
 import os
 import time
+import csv
 
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-import csv
-from pathlib import Path
+
+
 
 load_dotenv()
 
@@ -106,7 +107,8 @@ DISCOUNT_WEIGHTS = [0.45, 0.15, 0.15, 0.10, 0.10, 0.05]
 SLEEP_INTERVAL = 0.5  # 배치 전송 간격 (초), 필요에 따라 조정
 MAX_RETRIES = 3        # Kinesis 전송 실패 시 최대 재시도 횟수
 
-PRODUCT_MASTER_PATH = Path(__file__).resolve().with_name("product_master.csv")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PRODUCT_MASTER_PATH = os.path.join(BASE_DIR, "..", "product_master.csv")
 
 with open(PRODUCT_MASTER_PATH, newline="", encoding="utf-8-sig") as f:
     ITEM_PRICE_MAP = {
