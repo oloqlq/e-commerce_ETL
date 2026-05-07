@@ -7,6 +7,8 @@ import logging
 import requests
 from datetime import datetime, timedelta
 import os
+import pandas as pd
+import io
 
 DATABASE_BRONZE = 'ecommerce_bronze_db'
 DATABASE_SILVER = 'ecommerce_silver_db'
@@ -16,6 +18,13 @@ ATHENA_RESULTS  = 's3://de-ai-14-827913617635-ap-northeast-1-an/athena-results/'
 SILVER_TBL_NAME = 'silver_sales'
 
 logger = logging.getLogger(__name__)
+
+
+
+
+#######################################
+# call_back functions
+#######################################
 
 def check_bronze_data(target_dt, **kwargs):
     hook = S3Hook(aws_conn_id="aws_default")
@@ -28,7 +37,7 @@ def check_bronze_data(target_dt, **kwargs):
 
     if response.get("KeyCount", 0) == 0:
         raise ValueError(f"브론즈 데이터 없음: {target_dt}")
-    
+
     print(f"브론즈 데이터 확인: {response['KeyCount']}개 파일")
 
 # ── cleanup ───────────────────────────────────────
@@ -79,6 +88,76 @@ def alert_all(context):
     alert_email(context)
     alert_slack(context)
 
+
+'''
+데이터 품질 검증 기능 추가
+'''
+def validate_sales_silver(target_dt, **kwargs):
+    hook = S3Hook(aws_conn_id="aws_default")
+    s3 = hook.get_conn()
+
+    prefix = f"silver/sales/dt={target_dt}/"
+    response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+
+    file_keys = [
+        obj["Key"]
+        for obj in response.get("Contents", [])
+        if not obj["Key"].endswith("/") and not obj["Key"].endswith("_SUCCESS")
+    ]
+
+    if not file_keys:
+        raise ValueError(f"검증 대상 silver/sales 데이터 없음: {target_dt}")
+
+    dfs = []
+    for key in file_keys:
+        body = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        dfs.append(pd.read_parquet(io.BytesIO(body), engine="pyarrow"))
+
+    df = pd.concat(dfs, ignore_index=True)
+
+    errors = []
+
+    if df.empty:
+        errors.append("데이터프레임이 비어 있음")
+
+    required_cols = ["order_id", "order_time", "item_id", "total_amount"]
+    for col in required_cols:
+        if col not in df.columns:
+            errors.append(f"{col} 컬럼 없음")
+
+    if "order_id" in df.columns and df["order_id"].isna().any():
+        errors.append(f"order_id NULL 존재: {int(df['order_id'].isna().sum())}건")
+
+    if "order_time" in df.columns and df["order_time"].isna().any():
+        errors.append(f"order_time NULL 존재: {int(df['order_time'].isna().sum())}건")
+
+    if "item_id" in df.columns and df["item_id"].isna().any():
+        errors.append(f"item_id NULL 존재: {int(df['item_id'].isna().sum())}건")
+
+    if "total_amount" in df.columns:
+        invalid_total_mask = df["total_amount"].isna() | (df["total_amount"] < 0)
+        if invalid_total_mask.any():
+            errors.append(f"total_amount 이상값 존재: {int(invalid_total_mask.sum())}건")
+
+    if "unit_price" in df.columns:
+        invalid_unit_price_mask = df["unit_price"].isna() | (df["unit_price"] <= 0)
+        if invalid_unit_price_mask.any():
+            errors.append(f"unit_price 이상값 존재: {int(invalid_unit_price_mask.sum())}건")
+
+    if "quantity" in df.columns:
+        invalid_quantity_mask = df["quantity"].isna() | (df["quantity"] <= 0)
+        if invalid_quantity_mask.any():
+            errors.append(f"quantity 이상값 존재: {int(invalid_quantity_mask.sum())}건")
+
+    if errors:
+        raise ValueError(f"sales silver 데이터 품질 검증 실패 ({target_dt}) | " + " | ".join(errors))
+
+    print(f"[검증 완료] sales silver 데이터 품질 이상 없음: {target_dt}, rows={len(df)}")
+
+
+#######################################
+# DAG
+#######################################
 with DAG(
     dag_id="bronze_to_silver_sales",
     description="sales silver 테이블 구성 및 데이터 증분 작업",
@@ -88,7 +167,8 @@ with DAG(
         "retry_delay": timedelta(minutes=5),
         "on_failure_callback": alert_all
     },
-    schedule_interval="10 0 * * *",
+    schedule_interval="10 15 * * *",
+
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver", "sales"],
@@ -97,7 +177,7 @@ with DAG(
     check_bronze = PythonOperator(
         task_id = "check_bronze_data",
         python_callable=check_bronze_data,
-        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+        op_kwargs={"target_dt": "{{ ds }}"}
     )
 
     # t2: cleanup
@@ -175,4 +255,11 @@ with DAG(
         output_location=ATHENA_RESULTS,
     )
 
-    check_bronze >> cleanup_task >> create_silver_sales >> insert_silver_sales
+    # t5: 데이터 품질 검증
+    validate_task = PythonOperator(
+    task_id="validate_sales_silver",
+    python_callable=validate_sales_silver,
+    op_kwargs={"target_dt": "{{ ds }}"}
+    )
+
+    check_bronze >> cleanup_task >> create_silver_sales >> insert_silver_sales >> validate_task

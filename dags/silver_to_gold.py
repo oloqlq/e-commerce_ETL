@@ -24,16 +24,12 @@ def cleanup_gold_partition(target_dt, **kwargs):
     prefixes = [
         f"gold/funnel/event_date={target_dt}/",
         f"gold/device/event_date={target_dt}/",
-        f"gold/search/event_date={target_dt}/",
         f"gold/campaign/event_date={target_dt}/",
         f"gold/item/event_date={target_dt}/",
 
-        f"gold/sales_daily/dt={target_dt}/",
-        f"gold/sales_product/dt={target_dt}/",
-        f"gold/sales_category/dt={target_dt}/",
-        f"gold/sales_user/dt={target_dt}/",
-        f"gold/sales_payment/dt={target_dt}/",
-        f"gold/sales_region/dt={target_dt}/",
+        f"gold/sales_product/order_date={target_dt}/",
+        f"gold/sales_payment/order_date={target_dt}/",
+        f"gold/sales_region/order_date={target_dt}/",
     ]
 
     for prefix in prefixes:
@@ -85,7 +81,8 @@ with DAG(
         "retries":     0,
         "on_failure_callback": alert_all
     },
-    schedule_interval="0 10 * * *",
+    schedule_interval="10 15 * * *",
+
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["gold", "event", "sales"],
@@ -118,7 +115,7 @@ with DAG(
     cleanup_gold = PythonOperator(
         task_id="cleanup_gold",
         python_callable=cleanup_gold_partition,
-        op_kwargs={"target_dt": "{{ macros.ds_add(ds, -1) }}"}
+        op_kwargs={"target_dt": "{{ ds }}"}
     )
 
     # =========================
@@ -156,26 +153,6 @@ with DAG(
             PARTITIONED BY (event_date DATE)
             STORED AS PARQUET
             LOCATION '{{ params.gold_s3_path }}device/'
-            TBLPROPERTIES ('parquet.compress'='SNAPPY')
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "gold_s3_path": GOLD_S3_PATH,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-
-    create_gold_search = AthenaOperator(
-        task_id="create_gold_search",
-        query="""
-            CREATE EXTERNAL TABLE IF NOT EXISTS {{ params.database_gold }}.gold_search (
-                search_keyword          STRING,
-                count_search_keyword    BIGINT
-            )
-            PARTITIONED BY (event_date DATE)
-            STORED AS PARQUET
-            LOCATION '{{ params.gold_s3_path }}search/'
             TBLPROPERTIES ('parquet.compress'='SNAPPY')
         """,
         params={
@@ -237,29 +214,6 @@ with DAG(
     # Sales Gold Tables
     # =========================
 
-    create_gold_sales_daily = AthenaOperator(
-        task_id="create_gold_sales_daily",
-        query="""
-            CREATE EXTERNAL TABLE IF NOT EXISTS {{ params.database_gold }}.gold_sales_daily (
-                total_revenue      BIGINT,
-                order_count        BIGINT,
-                user_count         BIGINT,
-                total_quantity     BIGINT,
-                avg_order_amount   DOUBLE
-            )
-            PARTITIONED BY (order_date DATE)
-            STORED AS PARQUET
-            LOCATION '{{ params.gold_s3_path }}sales_daily/'
-            TBLPROPERTIES ('parquet.compress'='SNAPPY')
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "gold_s3_path": GOLD_S3_PATH,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-
     create_gold_sales_product = AthenaOperator(
         task_id="create_gold_sales_product",
         query="""
@@ -273,52 +227,6 @@ with DAG(
             PARTITIONED BY (order_date DATE)
             STORED AS PARQUET
             LOCATION '{{ params.gold_s3_path }}sales_product/'
-            TBLPROPERTIES ('parquet.compress'='SNAPPY')
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "gold_s3_path": GOLD_S3_PATH,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-
-    create_gold_sales_category = AthenaOperator(
-        task_id="create_gold_sales_category",
-        query="""
-            CREATE EXTERNAL TABLE IF NOT EXISTS {{ params.database_gold }}.gold_sales_category (
-                category           STRING,
-                total_revenue      BIGINT,
-                order_count        BIGINT,
-                total_quantity     BIGINT,
-                avg_order_amount   DOUBLE
-            )
-            PARTITIONED BY (order_date DATE)
-            STORED AS PARQUET
-            LOCATION '{{ params.gold_s3_path }}sales_category/'
-            TBLPROPERTIES ('parquet.compress'='SNAPPY')
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "gold_s3_path": GOLD_S3_PATH,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-
-    create_gold_sales_user = AthenaOperator(
-        task_id="create_gold_sales_user",
-        query="""
-            CREATE EXTERNAL TABLE IF NOT EXISTS {{ params.database_gold }}.gold_sales_user (
-                user_id            STRING,
-                order_count        BIGINT,
-                total_spent        BIGINT,
-                total_quantity     BIGINT,
-                avg_order_amount   DOUBLE
-            )
-            PARTITIONED BY (order_date DATE)
-            STORED AS PARQUET
-            LOCATION '{{ params.gold_s3_path }}sales_user/'
             TBLPROPERTIES ('parquet.compress'='SNAPPY')
         """,
         params={
@@ -387,7 +295,7 @@ with DAG(
                 COUNT(DISTINCT session_id) AS session_count,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
             GROUP BY action, event_date;
         """,
         params={
@@ -408,29 +316,8 @@ with DAG(
                 COUNT(*) AS cnt,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
             GROUP BY device, action, event_date;
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "database_silver": DATABASE_SILVER,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-
-    insert_gold_search = AthenaOperator(
-        task_id="insert_gold_search",
-        query="""
-            INSERT INTO {{ params.database_gold }}.gold_search
-            SELECT
-                search_keyword,
-                COUNT(*) AS count_search_keyword,
-                event_date
-            FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND action = 'search'
-            GROUP BY search_keyword, event_date;
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -454,7 +341,7 @@ with DAG(
                 ) AS conversion_rate,
                 event_date
             FROM {{ params.database_silver }}.silver_event
-            WHERE event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE event_date = DATE('{{ ds }}')
               AND campaign_id IS NOT NULL
             GROUP BY campaign_id, event_date;
         """,
@@ -487,7 +374,7 @@ with DAG(
                 ON e.item_id = s.item_id
                AND e.user_id = s.user_id
                AND e.action = 'purchase'
-            WHERE e.event_date = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE e.event_date = DATE('{{ ds }}')
               AND e.item_id IS NOT NULL
             GROUP BY e.item_id, e.event_date;
         """,
@@ -502,30 +389,7 @@ with DAG(
     # =========================
     # Sales Insert
     # =========================
-    # 일별 매출 KPI 대시보드
-    # 총 매출, 주문 수, 구매 고객 수, 총 판매 수량, 평균 주문 금액을 보여주기 위한 집계
-    insert_gold_sales_daily = AthenaOperator(
-        task_id="insert_gold_sales_daily",
-        query="""
-            INSERT INTO {{ params.database_gold }}.gold_sales_daily
-            SELECT
-                CAST(SUM(total_amount) AS BIGINT) AS total_revenue,
-                COUNT(DISTINCT order_id) AS order_count,
-                COUNT(DISTINCT user_id) AS user_count,
-                CAST(SUM(quantity) AS BIGINT) AS total_quantity,
-                ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                DATE(order_time) AS order_date
-            FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
-            GROUP BY DATE(order_time);
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "database_silver": DATABASE_SILVER,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
+
     # 상품별 매출 성과 대시보드
     # 상품별 매출, 주문 수, 판매 수량, 평균 주문 금액을 비교하기 위한 집계
     insert_gold_sales_product = AthenaOperator(
@@ -540,60 +404,9 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND item_id IS NOT NULL
             GROUP BY item_id, DATE(order_time);
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "database_silver": DATABASE_SILVER,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-
-    # 카테고리별 매출 분석 대시보드
-    # 카테고리별 매출 비중, 주문 수, 판매 수량을 보여주기 위한 집계
-    insert_gold_sales_category = AthenaOperator(
-        task_id="insert_gold_sales_category",
-        query="""
-            INSERT INTO {{ params.database_gold }}.gold_sales_category
-            SELECT
-                category,
-                CAST(SUM(total_amount) AS BIGINT) AS total_revenue,
-                COUNT(DISTINCT order_id) AS order_count,
-                CAST(SUM(quantity) AS BIGINT) AS total_quantity,
-                ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                DATE(order_time) AS order_date
-            FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND category IS NOT NULL
-            GROUP BY category, DATE(order_time);
-        """,
-        params={
-            "database_gold": DATABASE_GOLD,
-            "database_silver": DATABASE_SILVER,
-        },
-        database=DATABASE_GOLD,
-        output_location=ATHENA_RESULTS,
-    )
-    # 고객별 구매 분석 대시보드
-    # 고객별 주문 횟수, 총 구매 금액, 구매 수량, 평균 주문 금액을 분석하기 위한 집계
-    insert_gold_sales_user = AthenaOperator(
-        task_id="insert_gold_sales_user",
-        query="""
-            INSERT INTO {{ params.database_gold }}.gold_sales_user
-            SELECT
-                user_id,
-                COUNT(DISTINCT order_id) AS order_count,
-                CAST(SUM(total_amount) AS BIGINT) AS total_spent,
-                CAST(SUM(quantity) AS BIGINT) AS total_quantity,
-                ROUND(AVG(total_amount), 2) AS avg_order_amount,
-                DATE(order_time) AS order_date
-            FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
-              AND user_id IS NOT NULL
-            GROUP BY user_id, DATE(order_time);
         """,
         params={
             "database_gold": DATABASE_GOLD,
@@ -617,7 +430,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND payment_method IS NOT NULL
             GROUP BY payment_method, DATE(order_time);
         """,
@@ -643,7 +456,7 @@ with DAG(
                 ROUND(AVG(total_amount), 2) AS avg_order_amount,
                 DATE(order_time) AS order_date
             FROM {{ params.database_silver }}.silver_sales
-            WHERE DATE(order_time) = DATE('{{ ds }}') - INTERVAL '1' DAY
+            WHERE DATE(order_time) = DATE('{{ ds }}')
               AND region IS NOT NULL
             GROUP BY region, DATE(order_time);
         """,
@@ -662,26 +475,18 @@ with DAG(
     [wait_for_event_silver, wait_for_sales_silver] >> cleanup_gold >> [
         create_gold_funnel,
         create_gold_device,
-        create_gold_search,
         create_gold_campaign,
         create_gold_item,
-        create_gold_sales_daily,
         create_gold_sales_product,
-        create_gold_sales_category,
-        create_gold_sales_user,
         create_gold_sales_payment,
         create_gold_sales_region,
     ]
 
     create_gold_funnel >> insert_gold_funnel
     create_gold_device >> insert_gold_device
-    create_gold_search >> insert_gold_search
     create_gold_campaign >> insert_gold_campaign
     create_gold_item >> insert_gold_item
 
-    create_gold_sales_daily >> insert_gold_sales_daily
     create_gold_sales_product >> insert_gold_sales_product
-    create_gold_sales_category >> insert_gold_sales_category
-    create_gold_sales_user >> insert_gold_sales_user
     create_gold_sales_payment >> insert_gold_sales_payment
     create_gold_sales_region >> insert_gold_sales_region
