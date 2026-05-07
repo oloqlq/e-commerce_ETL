@@ -7,6 +7,8 @@ import time
 
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import csv
+from pathlib import Path
 
 load_dotenv()
 
@@ -14,6 +16,8 @@ STREAM_NAME = os.getenv("KINESIS_STREAM_NAME")
 REGION = os.getenv("REGION")
 ACCESS_KEY = os.getenv("ACCESS_KEY")
 SECRET_KEY = os.getenv("SECRET_KEY")
+
+
 
 USER_POOL = [f"USER-{i:03d}" for i in range(1, 101)]
 
@@ -102,6 +106,13 @@ DISCOUNT_WEIGHTS = [0.45, 0.15, 0.15, 0.10, 0.10, 0.05]
 SLEEP_INTERVAL = 0.5  # 배치 전송 간격 (초), 필요에 따라 조정
 MAX_RETRIES = 3        # Kinesis 전송 실패 시 최대 재시도 횟수
 
+PRODUCT_MASTER_PATH = Path(__file__).resolve().with_name("product_master.csv")
+
+with open(PRODUCT_MASTER_PATH, newline="", encoding="utf-8-sig") as f:
+    ITEM_PRICE_MAP = {
+        row["item_id"]: int(row["price"])
+        for row in csv.DictReader(f)
+    }
 
 def weighted_choice(weight_dict):
     return random.choices(
@@ -168,6 +179,25 @@ def create_session_context():
 def create_event(ctx, action, step_idx, item_id, search_keyword):
     is_purchase = action == "purchase"
 
+    quantity = None
+    discount_amount = None
+    payment_method = None
+
+    if is_purchase:
+        quantity = random.randint(1, 5)
+        unit_price = ITEM_PRICE_MAP[item_id]   # 또는 ITEM_PRICE_MAP.get(item_id)
+        max_discount = int(unit_price * quantity * 0.3)
+
+        discount_amount = min(
+            random.choices(DISCOUNTS, weights=DISCOUNT_WEIGHTS, k=1)[0],
+            max_discount
+        )
+        payment_method = random.choices(
+            PAYMENT_METHODS,
+            weights=PAYMENT_WEIGHTS,
+            k=1
+        )[0]
+
     return {
         "event_id": str(uuid.uuid4()),
         "event_timestamp": (
@@ -184,11 +214,10 @@ def create_event(ctx, action, step_idx, item_id, search_keyword):
         "campaign_id": ctx["campaign_id"],
         "search_keyword": search_keyword if action == "search" else None,
         "page_type": random.choice(PAGE_TYPES[action]),
-        "quantity": random.randint(1, 5) if is_purchase else None,
-        "discount_amount": random.choices(DISCOUNTS, weights=DISCOUNT_WEIGHTS, k=1)[0] if is_purchase else None,
-        "payment_method": random.choices(PAYMENT_METHODS, weights=PAYMENT_WEIGHTS, k=1)[0] if is_purchase else None,
+        "quantity": quantity,
+        "discount_amount": discount_amount,
+        "payment_method": payment_method,
     }
-
 
 def generate_session_events():
     ctx = create_session_context()
